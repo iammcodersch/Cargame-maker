@@ -1,0 +1,189 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <title>WebGL 3D Endless Runner Car Game</title>
+  <style>
+    body { margin: 0; overflow: hidden; }
+    canvas { display: block; }
+    #joystick {
+      position: absolute;
+      bottom: 20px;
+      left: 20px;
+      width: 100px;
+      height: 100px;
+      background: rgba(255, 255, 255, 0.2);
+      border-radius: 50%;
+      touch-action: none;
+    }
+    #joystick .stick {
+      width: 40px;
+      height: 40px;
+      background: rgba(255, 0, 0, 0.5);
+      border-radius: 50%;
+      position: absolute;
+      left: 30px;  
+      top: 30px;
+    }
+    #accelerator {
+      position: absolute;
+      bottom: 20px;
+      right: 20px;
+      display: flex;
+      flex-direction: column;
+      gap: 10px;
+    }
+    .pedal {
+      width: 60px;
+      height: 60px;
+      background: rgba(255, 255, 255, 0.3);
+      border-radius: 50%;
+      text-align: center;
+      line-height: 60px;
+      font-size: 18px;
+      color: #000;
+      user-select: none;
+    }
+  </style>
+</head>
+<body>
+  <div id="joystick">
+    <div class="stick" id="stick"></div>
+  </div>
+  <div id="accelerator">
+    <div class="pedal" id="pedalUp">▲</div>
+    <div class="pedal" id="pedalDown">▼</div>
+  </div>
+  <script src="https://cdn.jsdelivr.net/npm/three@0.160.0/build/three.min.js"></script>
+  <script src="https://cdn.jsdelivr.net/npm/three@0.160.0/examples/js/controls/OrbitControls.js"></script>
+  <script>
+    let scene, camera, renderer;
+    let carMesh, road;
+    let obstacles = [];
+    let speed = 0.1;
+    let targetX = 0;
+    let lastSpawnTime = 0;
+    const spawnInterval = 1000;
+
+    init();
+    animate();
+
+    function init() {
+      scene = new THREE.Scene();
+      camera = new THREE.PerspectiveCamera(75, window.innerWidth/window.innerHeight, 0.1, 1000);
+      renderer = new THREE.WebGLRenderer({antialias: true});
+      renderer.setSize(window.innerWidth, window.innerHeight);
+      document.body.appendChild(renderer.domElement);
+
+      const ambientLight = new THREE.AmbientLight(0xffffff, 0.8);
+      const directionalLight = new THREE.DirectionalLight(0xffffff, 0.5);
+      directionalLight.position.set(0, 10, 5);
+      scene.add(ambientLight, directionalLight);
+
+      const roadTexture = new THREE.TextureLoader().load('https://threejsfundamentals.org/threejs/resources/images/checker.png');
+      roadTexture.wrapS = roadTexture.wrapT = THREE.RepeatWrapping;
+      roadTexture.repeat.set(1, 50);
+      const roadGeometry = new THREE.PlaneGeometry(5, 200);
+      const roadMaterial = new THREE.MeshStandardMaterial({map: roadTexture, side: THREE.DoubleSide});
+      road = new THREE.Mesh(roadGeometry, roadMaterial);
+      road.rotation.x = -Math.PI / 2;
+      road.position.z = -90;
+      scene.add(road);
+
+      const carGeometry = new THREE.BoxGeometry(1, 0.5, 2);
+      const carMaterial = new THREE.MeshStandardMaterial({color: 0xff0000});
+      carMesh = new THREE.Mesh(carGeometry, carMaterial);
+      carMesh.position.set(0, 0.25, 2);
+      scene.add(carMesh);
+
+      camera.position.set(0, 5, 10);
+      camera.lookAt(0, 0, 0);
+
+      const buildingTexture = new THREE.TextureLoader().load('https://threejsfundamentals.org/threejs/resources/images/wall.jpg');
+      buildingTexture.wrapS = buildingTexture.wrapT = THREE.RepeatWrapping;
+      buildingTexture.repeat.set(1, 1);
+      const buildingMaterial = new THREE.MeshStandardMaterial({map: buildingTexture});
+
+      for (let i = -100; i < 100; i += 10) {
+        const height = Math.random() * 3 + 2;
+        const buildingLeft = new THREE.Mesh(new THREE.BoxGeometry(2, height, 2), buildingMaterial);
+        buildingLeft.position.set(-4, height / 2, -i);
+        scene.add(buildingLeft);
+
+        const buildingRight = new THREE.Mesh(new THREE.BoxGeometry(2, height, 2), buildingMaterial);
+        buildingRight.position.set(4, height / 2, -i);
+        scene.add(buildingRight);
+      }
+
+      window.addEventListener('keydown', (e) => {
+        if (e.key === 'ArrowLeft' || e.key === 'a') targetX = Math.max(targetX - 1, -2);
+        if (e.key === 'ArrowRight' || e.key === 'd') targetX = Math.min(targetX + 1, 2);
+        if (e.key === 'ArrowUp' || e.key === 'w') speed = Math.min(speed + 0.05, 1);
+        if (e.key === 'ArrowDown' || e.key === 's') speed = Math.max(speed - 0.05, 0.02);
+      });
+
+      const joystick = document.getElementById('joystick');
+      const stick = document.getElementById('stick');
+      let dragging = false;
+
+      joystick.addEventListener('touchstart', () => dragging = true);
+      joystick.addEventListener('touchmove', (e) => {
+        if (!dragging) return;
+        const touch = e.touches[0];
+        const rect = joystick.getBoundingClientRect();
+        const x = touch.clientX - rect.left - 50;
+        targetX = Math.max(-2, Math.min(2, (x / 50) * 2));
+        stick.style.left = `${Math.max(10, Math.min(60, x + 50 - 20))}px`;
+      });
+      joystick.addEventListener('touchend', () => {
+        dragging = false;
+        targetX = 0;
+        stick.style.left = '30px';
+      });
+
+      const pedalUp = document.getElementById('pedalUp');
+      const pedalDown = document.getElementById('pedalDown');
+      pedalUp.addEventListener('touchstart', () => speed = Math.min(speed + 0.05, 1));
+      pedalDown.addEventListener('touchstart', () => speed = Math.max(speed - 0.05, 0.02));
+    }
+
+    function spawnObstacle() {
+      const carBodyGeometry = new THREE.BoxGeometry(1, 0.5, 2);
+      const carBodyMaterial = new THREE.MeshStandardMaterial({color: 0x00ff00});
+      const opponentCar = new THREE.Mesh(carBodyGeometry, carBodyMaterial);
+      opponentCar.position.set((Math.floor(Math.random() * 5) - 2), 0.25, -50);
+      scene.add(opponentCar);
+      obstacles.push(opponentCar);
+    }
+
+    function animate(time) {
+      requestAnimationFrame(animate);
+      carMesh.position.x += (targetX - carMesh.position.x) * 0.1;
+      road.position.z += speed;
+      if (road.position.z > 0) road.position.z = -90;
+
+      if (time - lastSpawnTime > 1000) {
+        spawnObstacle();
+        lastSpawnTime = time;
+      }
+
+      for (let i = obstacles.length - 1; i >= 0; i--) {
+        obstacles[i].position.z += speed;
+        if (obstacles[i].position.z > 5) {
+          scene.remove(obstacles[i]);
+          obstacles.splice(i, 1);
+          continue;
+        }
+        const dx = carMesh.position.x - obstacles[i].position.x;
+        const dz = carMesh.position.z - obstacles[i].position.z;
+        if (Math.abs(dx) < 1 && Math.abs(dz) < 1) {
+          alert('Game Over!');
+          window.location.reload();
+        }
+      }
+
+      renderer.render(scene, camera);
+    }
+  </script>
+</body>
+</html>
